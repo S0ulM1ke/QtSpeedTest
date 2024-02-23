@@ -26,8 +26,6 @@ HEADERS += \
     src/DataTypes.h \
     src/SpeedTest.h \
     src/SpeedTestClient.h \
-    src/SpeedTestConfig.h \
     src/TestConfigTemplate.h
 
-DISTFILES += \
-    src/SpeedTestConfig.h.in
+DISTFILES +=

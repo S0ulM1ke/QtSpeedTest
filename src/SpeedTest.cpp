@@ -1,30 +1,34 @@
-#include "src/TestConfigTemplate.h"
 #define _USE_MATH_DEFINES
 
+#include "TestConfigTemplate.h"
 #include "SpeedTestClient.h"
-#include "SpeedTestConfig.h"
+#include "SpeedTest.h"
 
 #include <cmath>
 #include <algorithm>
-#include "SpeedTest.h"
-
+#include <QSysInfo>
 #include <QThread>
 #include <QThreadPool>
 #include <QMutex>
 #include <QUrlQuery>
 #include <QGeoCoordinate>
 
-namespace CONSTANTS {
+namespace Constants {
+const char *USER_AGENT = "Mozilla/5.0";
+const char *IP_INFO_URL = "http://speedtest.ookla.com/api/ipaddress.php";
+const char *SERVER_LIST_URL = "https://www.speedtest.net/speedtest-servers.php";
+const char *MIN_SERVER_VERSION = "2.3";
+const int LATENCY_SAMPLE_SIZE = 80;
 const int SAMPLE_SIZE = 10;
 }
 
-SpeedTest::SpeedTest(float minServerVersion):
-        mLatency(0),
-        mUploadSpeed(0),
-        mDownloadSpeed(0) {
-    mIpInfo = IPInfo();
-    mServerList = QVector<ServerInfo>();
-    mMinSupportedServer = minServerVersion;
+SpeedTest::SpeedTest():
+    m_latency(0),
+    m_uploadSpeed(0),
+    m_downloadSpeed(0) {
+    m_ipInfo = IPInfo();
+    m_serverList = QVector<ServerInfo>();
+    m_minSupportedServer = Constants::MIN_SERVER_VERSION;
 
     QObject::connect(&m_QNAM, &QNetworkAccessManager::finished, this, [this]() {
         qDebug() << "reply recieved";
@@ -34,9 +38,7 @@ SpeedTest::SpeedTest(float minServerVersion):
 }
 
 SpeedTest::~SpeedTest() {
-    //curl_global_cleanup();
-
-    mServerList.clear();
+    m_serverList.clear();
 }
 
 void SpeedTest::initialize()
@@ -50,56 +52,34 @@ void SpeedTest::initialize()
 }
 
 const QVector<ServerInfo> &SpeedTest::serverList() {
-    // if (!mServerList.empty())
-    //     return mServerList;
-
-    // int http_code = 0;
-    // if (fetchServers(SPEED_TEST_SERVER_LIST_URL, mServerList, http_code) && http_code == 200){
-    //     return mServerList;
-    // }
-    return mServerList;
+    return m_serverList;
 }
 
 
 const ServerInfo SpeedTest::bestServer(const int sample_size) {
-    auto best = findBestServerWithin(serverList(), mLatency, sample_size);
+    auto best = findBestServerWithin(serverList(), m_latency, sample_size);
     SpeedTestClient client = SpeedTestClient(best);
-    testLatency(client, SPEED_TEST_LATENCY_SAMPLE_SIZE, mLatency);
+    testLatency(client, Constants::LATENCY_SAMPLE_SIZE, m_latency);
     client.close();
     return best;
 }
 
-/* bool SpeedTest::setServer(ServerInfo& server){
-    SpeedTestClient client = SpeedTestClient(server);
-    if (client.connect() && client.version() >= mMinSupportedServer){
-        if (!testLatency(client, SPEED_TEST_LATENCY_SAMPLE_SIZE, mLatency)){
-            return false;
-        }
-    } else {
-        client.close();
-        return false;
-    }
-    client.close();
-    return true;
-
-} */
-
 bool SpeedTest::downloadSpeed(const ServerInfo &server, const TestConfig &config, double& result) {
     opFn pfunc = &SpeedTestClient::download;
-    mDownloadSpeed = execute(server, config, pfunc);
-    result = mDownloadSpeed;
+    m_downloadSpeed = execute(server, config, pfunc);
+    result = m_downloadSpeed;
     return true;
 }
 
 bool SpeedTest::uploadSpeed(const ServerInfo &server, const TestConfig &config, double& result) {
     opFn pfunc = &SpeedTestClient::upload;
-    mUploadSpeed = execute(server, config, pfunc);
-    result = mUploadSpeed;
+    m_uploadSpeed = execute(server, config, pfunc);
+    result = m_uploadSpeed;
     return true;
 }
 
 const long &SpeedTest::latency() {
-    return mLatency;
+    return m_latency;
 }
 
 bool SpeedTest::jitter(const ServerInfo &server, long& result, const int sample) {
@@ -197,74 +177,46 @@ double SpeedTest::execute(const ServerInfo &server, const TestConfig &config, co
     return overall_speed / 1000 / 1000;
 }
 
-/* CURLcode SpeedTest::httpGet(const std::string &url, std::stringstream &ss, CURL *handler, long timeout) {
+bool SpeedTest::compareVersion(const QString serverVersion)
+{
+    // Split version strings by '.'
+    QStringList first = serverVersion.split('.');
+    QStringList second = m_minSupportedServer.split('.');
 
-    CURLcode code(CURLE_FAILED_INIT);
-    CURL* curl = SpeedTest::curl_setup(handler);
+    // Ensure both versions have major and minor parts
+    if (first.size() != 2 || second.size() != 2)
+        return false;
 
+    // Extract major and minor versions
+    int firstMajor = first[0].toInt();
+    int firstMinor = first[1].toInt();
+    int secondMajor = second[0].toInt();
+    int secondMinor = second[1].toInt();
 
-    if (curl){
-        if (CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_FILE, &ss))
-            && CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout))
-            && CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, this->strict_ssl_verify))
-            && CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_URL, url.c_str()))) {
-            code = curl_easy_perform(curl);
-        }
-        if (handler == nullptr)
-            curl_easy_cleanup(curl);
-    }
-    return code;
-} */
+    // Compare major versions first
+    if (firstMajor < secondMajor)
+        return true;
+    else if (firstMajor > secondMajor)
+        return false;
+
+    // If major versions are equal, compare minor versions
+    return firstMinor < secondMinor;
+}
 
 QNetworkReply *SpeedTest::get(const QString url)
 {
     QNetworkRequest request(url);
-    //request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    request.setRawHeader("User-Agent", SPEED_TEST_USER_AGENT);
+    QString agent = Constants::USER_AGENT;
+    agent.append(" " + QSysInfo::prettyProductName());
+
+    request.setRawHeader("User-Agent", agent.toLocal8Bit());
 
 
     request.setTransferTimeout(15000);
 
     return m_QNAM.get(request);
 }
-
-/* CURLcode SpeedTest::httpPost(const std::string &url, const std::string &postdata, std::stringstream &os, void *handler, long timeout) {
-
-    CURLcode code(CURLE_FAILED_INIT);
-    CURL* curl = SpeedTest::curl_setup(handler);
-
-    if (curl){
-        if (CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_FILE, &os))
-            && CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout))
-            && CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_URL, url.c_str()))
-            && CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, this->strict_ssl_verify))
-            && CURLE_OK == (code = curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postdata.c_str()))) {
-            code = curl_easy_perform(curl);
-        }
-        if (handler == nullptr)
-            curl_easy_cleanup(curl);
-    }
-    return code;
-} */
-
-/* CURL *SpeedTest::curl_setup(CURL *handler) {
-    CURL* curl = handler == nullptr ? curl_easy_init() : handler;
-    if (curl){
-        if (curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &writeFunc) == CURLE_OK
-            && curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L) == CURLE_OK
-            && curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L) == CURLE_OK
-            && curl_easy_setopt(curl, CURLOPT_USERAGENT, SPEED_TEST_USER_AGENT) == CURLE_OK){
-            return curl;
-        } else {
-            curl_easy_cleanup(handler);
-            return nullptr;
-        }
-    }
-    return nullptr;
-
-
-} */
 
 size_t SpeedTest::writeFunc(void *buf, size_t size, size_t nmemb, void *userp) {
     if (userp) {
@@ -312,77 +264,44 @@ QString SpeedTest::getXmlString(QString xml, QString tagName)
 
 void SpeedTest::getIpInfo()
 {
-    auto reply = get(SPEED_TEST_IP_INFO_API_URL);
+    auto reply = get(Constants::IP_INFO_URL);
     QObject::connect(reply, &QNetworkReply::finished, this, [reply, this]() {
+        if (reply->error() != QNetworkReply::NoError) {
+            qDebug() << "Get IP info failed: " << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toString();
+            reply->deleteLater();
+            return;
+        }
         auto data = reply->readAll();
         reply->deleteLater();
         auto values = SpeedTest::parseQueryString(QString(data));
 
-        mIpInfo.ip_address = values["ip_address"];
-        mIpInfo.isp = values["isp"];
-        mIpInfo.lat = values["lat"].toFloat();
-        mIpInfo.lon = values["lon"].toFloat();
+        m_ipInfo.ip_address = values["ip_address"];
+        m_ipInfo.isp = values["isp"];
+        m_ipInfo.lat = values["lat"].toFloat();
+        m_ipInfo.lon = values["lon"].toFloat();
 
         emit ipInfoReceived();
-        ///emit sessionDataReceived(data);
     });
-    /* std::stringstream oss;
-    auto code = httpGet(SPEED_TEST_IP_INFO_API_URL, oss);
-    if (code == CURLE_OK){
-        auto values = SpeedTest::parseQueryString(oss.str());
-        mIpInfo = IPInfo();
-        mIpInfo.ip_address = values["ip_address"];
-        mIpInfo.isp = values["isp"];
-        mIpInfo.lat = std::stof(values["lat"]);
-        mIpInfo.lon = std::stof(values["lon"]);
-        values.clear();
-        oss.clear();
-        info = mIpInfo;
-        return true;
-    }
-
-    return false; */
 }
 
 IPInfo SpeedTest::ipInfo() {
-    return mIpInfo;
+    return m_ipInfo;
 }
 
-void SpeedTest::fetchServers() {
-    // std::stringstream oss;
-    // target.clear();
+void SpeedTest::fetchServers()
+{
+    auto reply = get(Constants::SERVER_LIST_URL);
 
-    // auto isHttpSchema = url.find_first_of("http") == 0;
-
-    //CURL* curl = curl_easy_init();
-    // auto cres = httpGet(url, oss, curl, 20);
-
-    // if (cres != CURLE_OK)
-    //     return false;
-
-    // if (isHttpSchema) {
-    //     int req_status;
-    //     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &req_status);
-    //     http_code = req_status;
-
-    //     if (http_code != 200){
-    //         curl_easy_cleanup(curl);
-    //         return false;
-    //     }
-    // } else {
-    //     http_code = 200;
-    // }
-
-    //mServerList
-
-    auto reply = get(SPEED_TEST_SERVER_LIST_URL);
     QObject::connect(reply, &QNetworkReply::finished, this, [reply, this]() {
+        if (reply->error() != QNetworkReply::NoError) {
+            qDebug() << "Fetch servers failed: " << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toString();
+            reply->deleteLater();
+            return;
+        }
         QString data = reply->readAll();
         reply->deleteLater();
+
         QXmlStreamReader xmlReader(data);
-
-        //qDebug() << data;
-
         QVector<ServerInfo> servers;
 
         while (!xmlReader.atEnd() && !xmlReader.error()) {
@@ -414,7 +333,7 @@ void SpeedTest::fetchServers() {
             servers.last().sponsor      = xmlReader.attributes().value("sponsor").toString();
 
             QGeoCoordinate serverCoord(servers.last().lat, servers.last().lon);
-            servers.last().distance = serverCoord.distanceTo(QGeoCoordinate(mIpInfo.lat, mIpInfo.lon));
+            servers.last().distance = serverCoord.distanceTo(QGeoCoordinate(m_ipInfo.lat, m_ipInfo.lon));
         }
 
         if (servers.isEmpty()) {
@@ -425,64 +344,29 @@ void SpeedTest::fetchServers() {
             return a.distance < b.distance;
         });
 
-        mServerList.clear();
-        mServerList = servers;
+        m_serverList.clear();
+        m_serverList = servers;
 
         emit serversFetched();
-
-        ///emit sessionDataReceived(data);
     });
 
 }
 
 void SpeedTest::findBestServer()
 {
-    int sample_size = CONSTANTS::SAMPLE_SIZE;
-    auto best = findBestServerWithin(serverList(), mLatency, sample_size);
+    int sample_size = Constants::SAMPLE_SIZE;
+    auto best = findBestServerWithin(serverList(), m_latency, sample_size);
     SpeedTestClient client = SpeedTestClient(best);
-    testLatency(client, SPEED_TEST_LATENCY_SAMPLE_SIZE, mLatency);
+    testLatency(client, Constants::LATENCY_SAMPLE_SIZE, m_latency);
     client.close();
 
     m_bestServer = best;
 
     qDebug() << "Found best server:" << m_bestServer.host;
     qDebug() << "Distance:" << m_bestServer.distance;
-    qDebug() << "Lattency:" << mLatency;
+    qDebug() << "Latency:" << m_latency;
 
     emit bestServerFound();
-    // int i = CONSTANTS::SAMPLE_SIZE;
-    // ServerInfo bestServer = mServerList.first();
-
-    // mLatency = INT_MAX;
-
-    // for (auto &server : mServerList){
-    //     auto client = SpeedTestClient(server);
-
-    //     if (!client.connect()){
-    //         // if (cb)
-    //         //     cb(false);
-    //         continue;
-    //     }
-
-    //     if (client.version() < mMinSupportedServer){
-    //         client.close();
-    //         continue;
-    //     }
-
-    //     long current_latency = LONG_MAX;
-    //     if (testLatency(client, 20, current_latency)){
-    //         if (current_latency < mLatency){
-    //             mLatency = current_latency;
-    //             bestServer = server;
-    //         }
-    //     }
-    //     client.close();
-
-    //     if (i-- < 0){
-    //         break;
-    //     }
-
-    // }
 }
 
 void SpeedTest::testJitter()
@@ -531,18 +415,16 @@ const ServerInfo SpeedTest::findBestServerWithin(const QVector<ServerInfo> &serv
         auto client = SpeedTestClient(server);
 
         if (!client.connect()){
-            // if (cb)
-            //     cb(false);
             qDebug() << "Failed to connect";
             continue;
         }
 
-        // if (client.version() < mMinSupportedServer){
-        //     qDebug() << "Server version fail";
-        //     qDebug() << "Client:" << client.version() << "mMinSupportedServer" << mMinSupportedServer;
-        //     client.close();
-        //     continue;
-        // }
+        if (compareVersion(client.version())){
+            qDebug() << "Server version fail";
+            qDebug() << "Client:" << client.version() << "mMinSupportedServer" << m_minSupportedServer;
+            client.close();
+            continue;
+        }
 
         long current_latency = LONG_MAX;
         if (testLatency(client, 20, current_latency)){
@@ -552,8 +434,6 @@ const ServerInfo SpeedTest::findBestServerWithin(const QVector<ServerInfo> &serv
             }
         }
         client.close();
-        // if (cb)
-        //     cb(true);
 
         if (i-- < 0){
             break;
@@ -592,19 +472,4 @@ bool SpeedTest::testLatency(SpeedTestClient &client, const int sample_size, long
     }
 
     return true;
-    // if (!client.connect()){
-    //     return false;
-    // }
-    // latency = INT_MAX;
-    // long temp_latency = 0;
-    // for (int i = 0; i < sample_size; i++){
-    //     if (client.ping(temp_latency)){
-    //         if (temp_latency < latency){
-    //             latency = temp_latency;
-    //         }
-    //     } else {
-    //         return false;
-    //     }
-    // }
-    // return true;
 }

@@ -3,11 +3,8 @@
 #include <QElapsedTimer>
 #include <QRandomGenerator>
 
-#include <BaseTsd.h>
-typedef SSIZE_T ssize_t;
-
-SpeedTestClient::SpeedTestClient(const ServerInfo &serverInfo): mServerInfo(serverInfo),
-                                                                                  mServerVersion(-1.0){
+SpeedTestClient::SpeedTestClient(const ServerInfo &serverInfo): m_serverInfo(serverInfo),
+    m_serverVersion("-1.0"){
     m_socket = new QTcpSocket(this);
 }
 SpeedTestClient::~SpeedTestClient() {
@@ -23,7 +20,7 @@ bool SpeedTestClient::connect() {
 
     auto ret = mkSocket();
     if (!ret) {
-        qDebug() << "Possible timeout";
+        qDebug() << "Socket connection timeout";
         return ret;
     }
 
@@ -39,7 +36,7 @@ bool SpeedTestClient::connect() {
     if (SpeedTestClient::readLine(m_socket, reply)) {
         QTextStream replyStream(&reply);
         QString hello;
-        float serverVersion;
+        QString serverVersion;
         replyStream >> hello >> serverVersion;
         if (replyStream.status() != QTextStream::Ok) {
             qDebug() << "Text stream fail, answer:" << hello;
@@ -48,7 +45,7 @@ bool SpeedTestClient::connect() {
         }
 
         if (!reply.isEmpty() && hello == "HELLO") {
-            mServerVersion = serverVersion; // Ensure mServerVersion is an appropriate type
+            m_serverVersion = serverVersion;
             return true;
         }
     }
@@ -62,6 +59,7 @@ void SpeedTestClient::close() {
     if (m_socket && m_socket->state() == QTcpSocket::ConnectedState){
         SpeedTestClient::writeLine(m_socket, "QUIT");
         m_socket->close();
+        m_socket->deleteLater();
     }
 
 }
@@ -180,62 +178,6 @@ bool SpeedTestClient::upload(const long size, const long chunk_size, long &milli
     // Check if the server's response starts with the expected acknowledgement
     QString expectedReplyStart = QString("OK %1 ").arg(size);
     return reply.startsWith(expectedReplyStart);
-
-    /* std::stringstream cmd;
-    cmd << "UPLOAD " << size << "\n";
-    auto cmd_len = cmd.str().length();
-
-    char *buff = new char[chunk_size];
-    for(size_t i = 0; i < static_cast<size_t>(chunk_size); i++)
-        buff[i] = static_cast<char>(rand() % 256);
-
-    long missing = size;
-    auto start = std::chrono::steady_clock::now();
-
-    if (!SpeedTestClient::writeLine(m_socket, cmd.str())){
-        delete[] buff;
-        return false;
-    }
-
-    ssize_t w = cmd_len;
-    missing -= w;
-
-    while(missing > 0){
-        if (missing - chunk_size > 0){
-            //w = _write(mSocketFd, buff, static_cast<size_t>(chunk_size));
-            //w = send(mSocketFd, buff, static_cast<size_t>(chunk_size), 0);
-            w = m_socket->write(buff, static_cast<size_t>(chunk_size));
-            if (w != chunk_size){
-                delete[] buff;
-                return false;
-            }
-            missing -= w;
-        } else {
-            buff[missing - 1] = '\n';
-            //w = _write(mSocketFd, buff, static_cast<size_t>(missing));
-            //w = send(mSocketFd, buff, static_cast<size_t>(missing), 0);
-            w = m_socket->write(buff, static_cast<size_t>(missing));
-            if (w != missing){
-                delete[] buff;
-                return false;
-            }
-            missing -= w;
-        }
-
-    }
-    QString reply;
-    if (!SpeedTestClient::readLine(m_socket, reply)){
-        delete[] buff;
-        return false;
-    }
-    auto stop = std::chrono::steady_clock::now();
-
-    std::stringstream ss;
-    ss << "OK " << size << " ";
-    millisec = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count();
-    delete[] buff;
-    return reply.substr(0, ss.str().length()) == ss.str(); */
-
 }
 
 bool SpeedTestClient::mkSocket() {
@@ -258,12 +200,12 @@ bool SpeedTestClient::mkSocket() {
 }
 
 
-float SpeedTestClient::version() {
-    return mServerVersion;
+QString SpeedTestClient::version() {
+    return m_serverVersion;
 }
 
 const std::pair<QString, int> SpeedTestClient::hostport() {
-    QString targetHost = mServerInfo.host;
+    QString targetHost = m_serverInfo.host;
     QStringList hostPort = targetHost.split(':');
 
     return std::pair<QString, int>(hostPort[0], hostPort[1].toInt());

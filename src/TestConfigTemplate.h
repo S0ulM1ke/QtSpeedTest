@@ -1,12 +1,6 @@
-//
-// Created by Francesco Laurita on 6/2/16.
-//
-
-#ifndef SPEEDTEST_TESTCONFIGTEMPLATE_H
-#define SPEEDTEST_TESTCONFIGTEMPLATE_H
+#pragma once
 
 #include "DataTypes.h"
-#include "SpeedTest.h"
 
 const TestConfig preflightConfigDownload = {
          600000, // start_size
@@ -117,5 +111,3 @@ void testConfigSelector(const double preSpeed, TestConfig& uploadConfig, TestCon
     }
 
 }
-
-#endif //SPEEDTEST_TESTCONFIGTEMPLATE_H

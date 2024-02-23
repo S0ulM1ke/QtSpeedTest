@@ -2,7 +2,6 @@
 #include <QQmlApplicationEngine>
 #include <QtConcurrent>
 
-#include "src/SpeedTestConfig.h"
 #include "src/SpeedTest.h"
 
 int main(int argc, char *argv[])
@@ -12,7 +11,7 @@ int main(int argc, char *argv[])
 #endif
     QGuiApplication app(argc, argv);
 
-    auto sp = SpeedTest(SPEED_TEST_MIN_SERVER_VERSION);
+    auto sp = SpeedTest();
     sp.initialize();
 
     QQmlApplicationEngine engine;

@@ -14,17 +14,18 @@ public:
     bool ping(long &millisec);
     bool upload(long size, long chunk_size, long &millisec);
     bool download(long size, long chunk_size, long &millisec);
-    float version();
+    QString version();
     const std::pair<QString, int> hostport();
     void close();
 
 
 private:
     bool mkSocket();
-    ServerInfo mServerInfo;
-    float mServerVersion;
     static bool readLine(QTcpSocket *socket, QString& buffer);
     static bool writeLine(QTcpSocket *socket, const QString& buffer);
+
+    ServerInfo m_serverInfo;
+    QString m_serverVersion;
 
     QTcpSocket* m_socket;
 };

@@ -2,7 +2,6 @@
 
 #include <QObject>
 #include <QXmlStreamReader>
-#include <functional>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include "DataTypes.h"
@@ -16,7 +15,7 @@ class SpeedTest final: public QObject
 {
     Q_OBJECT
 public:
-    explicit SpeedTest(float minServerVersion);
+    explicit SpeedTest();
     ~SpeedTest();
 
     void initialize();
@@ -61,18 +60,19 @@ private:
 
     double execute(const ServerInfo &server, const TestConfig &config, const opFn &fnc);
 
-    IPInfo mIpInfo;
+    bool compareVersion(const QString serverVersion);
+
+    IPInfo m_ipInfo;
     ServerInfo m_bestServer;
-    QVector<ServerInfo> mServerList;
+    QVector<ServerInfo> m_serverList;
 
     TestConfig m_uploadConfig;
     TestConfig m_downloadConfig;
 
-    long mLatency;
-    double mUploadSpeed;
-    double mDownloadSpeed;
-    float mMinSupportedServer;
-    bool strict_ssl_verify;
+    long m_latency;
+    double m_uploadSpeed;
+    double m_downloadSpeed;
+    QString m_minSupportedServer;
 
     QNetworkAccessManager m_QNAM;
 };
