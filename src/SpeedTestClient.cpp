@@ -54,16 +54,6 @@ bool SpeedTestClient::connect() {
     return false;
 }
 
-// It closes a connection
-void SpeedTestClient::close() {
-    if (m_socket && m_socket->state() == QTcpSocket::ConnectedState){
-        SpeedTestClient::writeLine(m_socket, "QUIT");
-        m_socket->close();
-        m_socket->deleteLater();
-    }
-
-}
-
 // It executes PING command
 bool SpeedTestClient::ping(long &millisec) {
     if (!m_socket || m_socket->state() != QTcpSocket::ConnectedState) {
@@ -180,6 +170,27 @@ bool SpeedTestClient::upload(const long size, const long chunk_size, long &milli
     return reply.startsWith(expectedReplyStart);
 }
 
+QString SpeedTestClient::version() {
+    return m_serverVersion;
+}
+
+const std::pair<QString, int> SpeedTestClient::hostport() {
+    QString targetHost = m_serverInfo.host;
+    QStringList hostPort = targetHost.split(':');
+
+    return std::pair<QString, int>(hostPort[0], hostPort[1].toInt());
+}
+
+// It closes a connection
+void SpeedTestClient::close() {
+    if (m_socket && m_socket->state() == QTcpSocket::ConnectedState){
+        SpeedTestClient::writeLine(m_socket, "QUIT");
+        m_socket->close();
+        m_socket->deleteLater();
+    }
+
+}
+
 bool SpeedTestClient::mkSocket() {
     if (!m_socket) {
         m_socket = new QTcpSocket(this); // Ensure m_socket is initialized
@@ -197,18 +208,6 @@ bool SpeedTestClient::mkSocket() {
     // Use a reasonable timeout for the connection attempt
     const int timeoutMs = 3000; // 3 seconds timeout
     return m_socket->waitForConnected(timeoutMs);
-}
-
-
-QString SpeedTestClient::version() {
-    return m_serverVersion;
-}
-
-const std::pair<QString, int> SpeedTestClient::hostport() {
-    QString targetHost = m_serverInfo.host;
-    QStringList hostPort = targetHost.split(':');
-
-    return std::pair<QString, int>(hostPort[0], hostPort[1].toInt());
 }
 
 bool SpeedTestClient::readLine(QTcpSocket *socket, QString &buffer) {

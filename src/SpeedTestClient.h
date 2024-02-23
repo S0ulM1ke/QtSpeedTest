@@ -12,8 +12,8 @@ public:
 
     bool connect();
     bool ping(long &millisec);
-    bool upload(long size, long chunk_size, long &millisec);
     bool download(long size, long chunk_size, long &millisec);
+    bool upload(long size, long chunk_size, long &millisec);
     QString version();
     const std::pair<QString, int> hostport();
     void close();

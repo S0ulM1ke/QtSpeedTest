@@ -18,30 +18,37 @@ public:
     explicit SpeedTest();
     ~SpeedTest();
 
+    Q_PROPERTY(double downloadSpeed READ downloadSpeed WRITE setDownloadSpeed NOTIFY downloadSpeedChanged FINAL)
+
+    Q_PROPERTY(double uploadSpeed READ uploadSpeed WRITE setUploadSpeed NOTIFY uploadSpeedChanged FINAL)
+
     void initialize();
 
-    QNetworkReply *get(const QString url);
-
-    static QMap<QString, QString> parseQueryString(const QString& query);
-    static QString getXmlString(QString xml, QString tagName);
-
     void getIpInfo();
-    IPInfo ipInfo();
+    const IPInfo ipInfo();
 
     const QVector<ServerInfo>& serverList();
     const ServerInfo bestServer(int sample_size = 5);
 
+    double downloadSpeed() const;
+    void setDownloadSpeed(double speed);
+
+    double uploadSpeed() const;
+    void setUploadSpeed(double speed);
+
     const long &latency();
-    bool downloadSpeed(const ServerInfo& server, const TestConfig& config, double& result);
-    bool uploadSpeed(const ServerInfo& server, const TestConfig& config, double& result);
-    bool jitter(const ServerInfo& server, long& result, int sample = 40);
 
 signals:
     void ipInfoReceived();
     void serversFetched();
     void bestServerFound();
     void jitterChecked();
+    void downloadTestFinished(double result);
+    void uploadTestFinished(double result);
     void preflightChecked();
+
+    void uploadSpeedChanged();
+    void downloadSpeedChanged();
 
 private slots:
     void fetchServers();
@@ -49,18 +56,23 @@ private slots:
     void testJitter();
     void preflightTest();
     void downloadSpeedTest();
+    void uploadSpeedTest();
 
 private:
+    QNetworkReply *get(const QString url);
+
+    static QMap<QString, QString> parseQueryString(const QString& query);
+
+    bool compareVersion(const QString serverVersion);
 
     bool testLatency(SpeedTestClient& client, int sample_size, long& latency);
+    bool jitter(const ServerInfo& server, long& result, int sample = 40);
+    void downloadTest(const ServerInfo& server, const TestConfig& config);
+    void uploadTest(const ServerInfo& server, const TestConfig& config);
 
     const ServerInfo findBestServerWithin(const QVector<ServerInfo> &serverList, long& latency, int sample_size = 5);
 
-    static size_t writeFunc(void* buf, size_t size, size_t nmemb, void* userp);
-
     double execute(const ServerInfo &server, const TestConfig &config, const opFn &fnc);
-
-    bool compareVersion(const QString serverVersion);
 
     IPInfo m_ipInfo;
     ServerInfo m_bestServer;
@@ -70,8 +82,8 @@ private:
     TestConfig m_downloadConfig;
 
     long m_latency;
-    double m_uploadSpeed;
     double m_downloadSpeed;
+    double m_uploadSpeed;
     QString m_minSupportedServer;
 
     QNetworkAccessManager m_QNAM;
