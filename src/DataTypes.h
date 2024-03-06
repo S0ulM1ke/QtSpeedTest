@@ -29,7 +29,7 @@ typedef struct test_config_t {
     long start_size;
     long max_size;
     long incr_size;
-    long buff_size;
+    long chunk_size;
     long min_test_time_ms;
     int  concurrency;
     QString label;

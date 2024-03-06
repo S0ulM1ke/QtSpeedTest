@@ -12,6 +12,9 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
 
     auto sp = SpeedTest();
+
+    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &sp, &SpeedTest::interrupt);
+
     sp.initialize();
 
     QQmlApplicationEngine engine;

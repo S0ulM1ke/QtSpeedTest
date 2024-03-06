@@ -7,13 +7,14 @@
 #include "DataTypes.h"
 
 class SpeedTestClient;
-typedef bool (SpeedTestClient::*opFn)(const long size, const long chunk_size, long &millisec);
+typedef void (SpeedTestClient::*opFn)(const long size, const long chunk_size);
 typedef void (*progressFn)(bool success);
 
 
 class SpeedTest final: public QObject
 {
     Q_OBJECT
+    typedef void (SpeedTest::*callFn)(double speed);
 public:
     explicit SpeedTest();
     ~SpeedTest();
@@ -50,6 +51,9 @@ signals:
     void uploadSpeedChanged();
     void downloadSpeedChanged();
 
+public slots:
+    void interrupt();
+
 private slots:
     void fetchServers();
     void findBestServer();
@@ -57,6 +61,8 @@ private slots:
     void preflightTest();
     void downloadSpeedTest();
     void uploadSpeedTest();
+    void handleDownloadSpeed(double speed);
+    void handleUploadSpeed(double speed);
 
 private:
     QNetworkReply *get(const QString url);
@@ -71,8 +77,8 @@ private:
     void uploadTest(const ServerInfo& server, const TestConfig& config);
 
     const ServerInfo findBestServerWithin(const QVector<ServerInfo> &serverList, long& latency, int sample_size = 5);
-
-    double execute(const ServerInfo &server, const TestConfig &config, const opFn &fnc);
+    double calculateSpeed(QVector<double> results);
+    void execute(const ServerInfo &server, const TestConfig &config, const opFn &fnc, const callFn &cfunc);
 
     IPInfo m_ipInfo;
     ServerInfo m_bestServer;
@@ -80,10 +86,12 @@ private:
 
     TestConfig m_uploadConfig;
     TestConfig m_downloadConfig;
-
+    int m_threadsFinished = 0;
     long m_latency;
     double m_downloadSpeed;
     double m_uploadSpeed;
+    bool m_isInterruptRequested { false };
+
     QString m_minSupportedServer;
 
     QNetworkAccessManager m_QNAM;

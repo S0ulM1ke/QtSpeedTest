@@ -121,6 +121,11 @@ const long &SpeedTest::latency() {
     return m_latency;
 }
 
+void SpeedTest::interrupt()
+{
+    m_isInterruptRequested = true;
+}
+
 // private slots
 
 void SpeedTest::fetchServers()
@@ -215,6 +220,8 @@ void SpeedTest::testJitter()
 
 void SpeedTest::preflightTest()
 {
+    m_downloadSpeed = 0.0;
+
     auto ctx = new QObject;
     QObject::connect(this, &SpeedTest::downloadTestFinished, ctx, [ctx, this](double result){
         this->disconnect(ctx);
@@ -224,27 +231,38 @@ void SpeedTest::preflightTest()
 
         qDebug() << m_downloadConfig.label;
 
-        emit preflightChecked();
+        //emit preflightChecked();
+        //downloadSpeedTest();
+        uploadSpeedTest();
     });
 
-    static_cast<void>(QtConcurrent::run(&SpeedTest::downloadTest, this, m_bestServer, preflightConfigDownload));
+    m_downloadConfig = preflightConfigDownload;
+    downloadTest(m_bestServer, m_downloadConfig);
+
+    //static_cast<void>(QtConcurrent::run(&SpeedTest::downloadTest, this, m_bestServer, preflightConfigDownload));
 }
 
 void SpeedTest::downloadSpeedTest()
 {
+    m_downloadSpeed = 0.0;
+
     auto ctx = new QObject;
     QObject::connect(this, &SpeedTest::downloadTestFinished, ctx, [ctx, this](double result){
         this->disconnect(ctx);
         ctx->deleteLater();
 
-        qDebug() << "Donwload speed:" << result;
+        qDebug() << "Download speed:" << result;
     });
 
-    static_cast<void>(QtConcurrent::run(&SpeedTest::downloadTest, this, m_bestServer, m_downloadConfig));
+    downloadTest(m_bestServer, m_downloadConfig);
+
+    //static_cast<void>(QtConcurrent::run(&SpeedTest::downloadTest, this, m_bestServer, m_downloadConfig));
 }
 
 void SpeedTest::uploadSpeedTest()
 {
+    m_uploadSpeed = 0.0;
+
     auto ctx = new QObject;
     QObject::connect(this, &SpeedTest::uploadTestFinished, ctx, [ctx, this](double result){
         this->disconnect(ctx);
@@ -253,7 +271,30 @@ void SpeedTest::uploadSpeedTest()
         qDebug() << "Upload speed:" << result;
     });
 
-    static_cast<void>(QtConcurrent::run(&SpeedTest::uploadTest, this, m_bestServer, m_downloadConfig));
+    uploadTest(m_bestServer, m_downloadConfig);
+    //static_cast<void>(QtConcurrent::run(&SpeedTest::uploadTest, this, m_bestServer, m_downloadConfig));
+}
+
+void SpeedTest::handleDownloadSpeed(double speed)
+{
+    m_downloadSpeed += speed;
+    m_threadsFinished++;
+
+    if (m_threadsFinished == m_downloadConfig.concurrency) {
+        m_threadsFinished = 0;
+        emit downloadTestFinished(m_downloadSpeed);
+    }
+}
+
+void SpeedTest::handleUploadSpeed(double speed)
+{
+    m_uploadSpeed += speed;
+    m_threadsFinished++;
+
+    if (m_threadsFinished == m_downloadConfig.concurrency) {
+        m_threadsFinished = 0;
+        emit uploadTestFinished(m_uploadSpeed);
+    }
 }
 
 // private
@@ -366,21 +407,17 @@ bool SpeedTest::jitter(const ServerInfo &server, long& result, const int sample)
 }
 
 void SpeedTest::downloadTest(const ServerInfo &server, const TestConfig &config) {
-    double result;
     opFn pfunc = &SpeedTestClient::download;
-    result = execute(server, config, pfunc);
-    setDownloadSpeed(result);
-
-    emit downloadTestFinished(result);
+    callFn cfunc = &SpeedTest::handleDownloadSpeed;
+    execute(server, config, pfunc, cfunc);
+    //static_cast<void>(QtConcurrent::run(&SpeedTest::execute, this, server, config, pfunc, cfunc));
 }
 
 void SpeedTest::uploadTest(const ServerInfo &server, const TestConfig &config) {
-    double result;
     opFn pfunc = &SpeedTestClient::upload;
-    result = execute(server, config, pfunc);
-    setUploadSpeed(result);
-
-    emit uploadTestFinished(result);
+    callFn cfunc = &SpeedTest::handleUploadSpeed;
+    execute(server, config, pfunc, cfunc);
+    static_cast<void>(QtConcurrent::run(&SpeedTest::execute, this, server, config, pfunc, cfunc));
 }
 
 const ServerInfo SpeedTest::findBestServerWithin(const QVector<ServerInfo> &serverList, long &latency,
@@ -422,69 +459,60 @@ const ServerInfo SpeedTest::findBestServerWithin(const QVector<ServerInfo> &serv
     return bestServer;
 }
 
-double SpeedTest::execute(const ServerInfo &server, const TestConfig &config, const opFn &pfunc) {
-    QThreadPool pool;
-    pool.setMaxThreadCount(config.concurrency);
-    double overall_speed = 0;
-    QMutex mtx;
+double SpeedTest::calculateSpeed(QVector<double> results)
+{
+    std::sort(results.begin(), results.end());
 
-    for (int i = 0; i < pool.maxThreadCount(); i++) {
-        pool.start([=, &overall_speed, &mtx](){
-            long start_size = config.start_size;
-            long max_size   = config.max_size;
-            long incr_size  = config.incr_size;
-            long curr_size  = start_size;
-
-            auto spClient = SpeedTestClient(server);
-
-            if (spClient.connect()) {
-                //long total_size = 0;
-                //long total_time = 0;
-                auto start = std::chrono::steady_clock::now();
-                QVector<double> partial_results;
-                while (curr_size < max_size){
-                    long op_time = 0;
-                    if ((spClient.*pfunc)(curr_size, config.buff_size, op_time)) {
-                        //total_size += curr_size;
-                        //total_time += op_time;
-                        double metric = (curr_size * 8) / (static_cast<double>(op_time) / 1000);
-                        partial_results.push_back(metric);
-
-                    } else {
-                        qDebug() << "Fail";
-                    }
-                    curr_size += incr_size;
-                    auto stop = std::chrono::steady_clock::now();
-                    if (std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() > config.min_test_time_ms)
-                        break;
-                }
-
-                spClient.close();
-                std::sort(partial_results.begin(), partial_results.end());
-
-                size_t skip = 0;
-                size_t drop = 0;
-                if (partial_results.size() >= 10){
-                    skip = partial_results.size() / 4;
-                    drop = 2;
-                }
-
-                size_t iter = 0;
-                double real_sum = 0;
-                for (auto it = partial_results.begin() + skip; it != partial_results.end() - drop; ++it ){
-                    iter++;
-                    real_sum += (*it);
-                }
-                mtx.lock();
-                overall_speed += (real_sum / iter);
-                mtx.unlock();
-            } else {
-                qDebug() << "Fail";
-            }
-        });
-
+    size_t skip = 0;
+    size_t drop = 0;
+    if (results.size() >= 10){
+        skip = results.size() / 4;
+        drop = 2;
     }
-    pool.waitForDone();
 
-    return overall_speed / 1000 / 1000;
+    size_t iter = 0;
+    double real_sum = 0;
+    for (auto it = results.begin() + skip; it != results.end() - drop; ++it ){
+        iter++;
+        real_sum += (*it);
+    }
+
+    return (real_sum / iter) / 1000 / 1000;
+}
+
+void SpeedTest::execute(const ServerInfo &server, const TestConfig &config,
+                        const opFn &pfunc, const callFn &cfunc) {
+    for (int i = 0; i < config.concurrency; i++) {
+        auto curr_size = QSharedPointer<long>::create(config.start_size);
+        auto *spClient = new SpeedTestClient(server);
+        if (spClient->connect()) {
+            auto partial_results = QSharedPointer<QVector<double>>::create();
+            auto timer = new QTimer;
+            timer->setSingleShot(true);
+
+            auto ctx = new QObject;
+            QObject::connect(timer, &QTimer::timeout, this, [timer, spClient]{
+                double time = static_cast<double>(timer->interval());
+                emit spClient->opFinisfed(time);
+            });
+            QObject::connect(spClient, &SpeedTestClient::opFinisfed, ctx, [=](double time){
+                double metric = (*curr_size * 8) / (time / 1000);
+                partial_results->push_back(metric);
+                *curr_size += config.incr_size;
+                if (*curr_size > config.max_size || !timer->isActive()) {
+                    //spClient->deleteLater();
+                    spClient->close();
+                    ctx->deleteLater();
+                    (this->*cfunc)(calculateSpeed(*partial_results));
+                } else {
+                    (spClient->*pfunc)(*curr_size, config.chunk_size);
+                }
+            });
+
+            timer->start(config.min_test_time_ms);
+            (spClient->*pfunc)(config.start_size, config.chunk_size);
+        } else {
+            qDebug() << "Fail";
+        }
+    };
 }

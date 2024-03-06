@@ -6,23 +6,29 @@
 
 class SpeedTestClient final: public QObject
 {
+    Q_OBJECT
 public:
     explicit SpeedTestClient(const ServerInfo& serverInfo);
     ~SpeedTestClient();
 
     bool connect();
+    void connectToSocket();
     bool ping(long &millisec);
-    bool download(long size, long chunk_size, long &millisec);
-    bool upload(long size, long chunk_size, long &millisec);
+    void download(const long size, const long chunk_size);
+    void upload(const long size, const long chunk_size);
     QString version();
     const std::pair<QString, int> hostport();
     void close();
+
+signals:
+    void socketConnected();
+    void opFinisfed(double mlsec);
 
 
 private:
     bool mkSocket();
     static bool readLine(QTcpSocket *socket, QString& buffer);
-    static bool writeLine(QTcpSocket *socket, const QString& buffer);
+    bool writeLine(const QString& buffer);
 
     ServerInfo m_serverInfo;
     QString m_serverVersion;
@@ -30,4 +36,5 @@ private:
     QTcpSocket* m_socket;
 };
 
-typedef bool (SpeedTestClient::*opFn)(const long size, const long chunk_size, long &millisec);
+//typedef bool (SpeedTestClient::*opFn)(const long size, const long chunk_size, long &millisec);
+typedef void (SpeedTestClient::*opFn)(const long size, const long chunk_size);

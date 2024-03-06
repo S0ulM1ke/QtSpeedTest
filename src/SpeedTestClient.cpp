@@ -2,10 +2,15 @@
 
 #include <QElapsedTimer>
 #include <QRandomGenerator>
+#include <QTimer>
 
 SpeedTestClient::SpeedTestClient(const ServerInfo &serverInfo): m_serverInfo(serverInfo),
-    m_serverVersion("-1.0"){
+    m_serverVersion("-1.0")
+{
     m_socket = new QTcpSocket(this);
+    QObject::connect(m_socket, &QTcpSocket::errorOccurred, this, [this]{
+        qDebug() << "Socket error:" << m_socket->errorString() << m_socket->error();
+    });
 }
 SpeedTestClient::~SpeedTestClient() {
     close();
@@ -25,7 +30,7 @@ bool SpeedTestClient::connect() {
     }
 
 
-    if (!SpeedTestClient::writeLine(m_socket, "HI")){
+    if (!writeLine("HI")){
         close();
         qDebug() << "No answer to 'HI'";
         return false;
@@ -54,6 +59,35 @@ bool SpeedTestClient::connect() {
     return false;
 }
 
+void SpeedTestClient::connectToSocket()
+{
+    auto ctx = new QObject;
+    QObject::connect(m_socket, &QTcpSocket::connected, ctx, [this]{
+        if (!writeLine("HI")){
+            close();
+            return;
+        }
+    });
+    QObject::connect(m_socket, &QTcpSocket::readyRead, ctx, [ctx, this]{
+        m_socket->disconnect(ctx);
+        ctx->deleteLater();
+
+        auto data = m_socket->readAll();
+        QString hello;
+        QString serverVersion;
+        QTextStream replyStream(data);
+        replyStream >> hello >> serverVersion;
+
+        if (!data.isEmpty() && hello == "HELLO") {
+            m_serverVersion = serverVersion;
+            emit socketConnected();
+        }
+
+    });
+    auto hostPort = hostport();
+    m_socket->connectToHost(hostPort.first, hostPort.second);
+}
+
 // It executes PING command
 bool SpeedTestClient::ping(long &millisec) {
     if (!m_socket || m_socket->state() != QTcpSocket::ConnectedState) {
@@ -65,7 +99,7 @@ bool SpeedTestClient::ping(long &millisec) {
     QString cmd = QString("PING %1").arg(timer.nsecsElapsed()); // Using high-resolution timer
 
     timer.start();
-    if (!writeLine(m_socket, cmd)) {
+    if (!writeLine(cmd)) {
         close();
         qDebug() << "Ping failed - socket write issue";
         return false;
@@ -86,88 +120,74 @@ bool SpeedTestClient::ping(long &millisec) {
 }
 
 // It executes DOWNLOAD command
-bool SpeedTestClient::download(const long size, const long chunk_size, long &millisec) {
+void SpeedTestClient::download(const long size, const long chunk_size)
+{
+    Q_UNUSED(chunk_size)
+    auto totalReceived = QSharedPointer<long>::create(0);
+    auto timer = QSharedPointer<QElapsedTimer>::create();
+
+    auto ctx = new QObject;
+    QObject::connect(m_socket, &QTcpSocket::readyRead, ctx, [ctx, this, totalReceived, size, timer]{
+        auto data = m_socket->readAll();
+        *totalReceived += data.size();
+        if (*totalReceived >= size) {
+            double millisec = timer->elapsed();
+            emit opFinisfed(millisec);
+            ctx->deleteLater();
+        }
+    });
+
+    timer->start();
     QString cmd = QString("DOWNLOAD %1").arg(size);
-    if (!writeLine(m_socket, cmd)) {
+    if (!writeLine(cmd)) {
         qDebug() << "Download fail - unable to write";
-        return false;
+        return;
     }
-
-    QByteArray buffer; // Use QByteArray for ease of use and safety
-    buffer.resize(chunk_size);
-
-    long totalReceived = 0;
-    QElapsedTimer timer;
-    timer.start();
-
-    while (totalReceived < size) {
-        if (!m_socket->waitForReadyRead(10000)) {
-            qDebug() << "Download fail - timeout waiting for data";
-            return false;
-        }
-
-        while (m_socket->bytesAvailable() > 0 && totalReceived < size) {
-            qint64 bytesReceived = m_socket->read(buffer.data(), qMin(static_cast<long>(chunk_size), size - totalReceived));
-            if (bytesReceived < 0) {
-                qDebug() << "Download fail - read error";
-                return false;
-            }
-            totalReceived += bytesReceived;
-        }
-    }
-
-    millisec = timer.elapsed();
-    return true;
 }
 
 // It executes UPLOAD command
-bool SpeedTestClient::upload(const long size, const long chunk_size, long &millisec) {
+void SpeedTestClient::upload(const long size, const long chunk_size)
+{
     QString cmd = QString("UPLOAD %1\n").arg(size);
 
     // Write the command to the socket
-    if (!SpeedTestClient::writeLine(m_socket, cmd)) {
-        return false;
+    if (!SpeedTestClient::writeLine(cmd)) {
+        return;
     }
 
-    QByteArray buffer;
-    buffer.resize(chunk_size); // Pre-allocate the buffer to the chunk size
+    QByteArray data;
+    data.fill('1', chunk_size);
 
-    // Fill the buffer with random data
-    std::generate(buffer.begin(), buffer.end(), []() -> char {
-        return static_cast<char>(QRandomGenerator::global()->bounded(256));
+
+    auto totalReceived = QSharedPointer<long>::create(0);
+    auto timer = QSharedPointer<QElapsedTimer>::create();
+
+    auto ctx = new QObject;
+    QObject::connect(m_socket, &QTcpSocket::bytesWritten, ctx, [ctx, this, totalReceived, data, size, chunk_size, timer](quint64 bytes) mutable{
+        //auto data = m_socket->readAll();
+        qDebug() << "Wtitten" << bytes << "left:" << size - *totalReceived;
+        *totalReceived += bytes;
+        if (*totalReceived < size) {
+            qint64 nextChunkSize = qMin(chunk_size, size - *totalReceived);
+            QByteArray nextChunk = data.left(nextChunkSize);
+            m_socket->write(nextChunk);
+            //m_socket->write(data);
+        } else {
+            qDebug() << "finished";
+            double millisec = timer->elapsed();
+            emit opFinisfed(millisec);
+            ctx->deleteLater();
+        }
     });
 
-    long missing = size - cmd.length(); // Adjust for the length of the command sent
-    QElapsedTimer timer;
-    timer.start(); // Start timing the upload operation
-
-    while (missing > 0) {
-        qint64 toWrite = qMin(missing, static_cast<long>(chunk_size));
-        if (toWrite < chunk_size) {
-            // Resize buffer for the last chunk if it's smaller than the chunk size
-            buffer.resize(toWrite);
-            buffer[toWrite - 1] = '\n'; // Ensure the last byte is a newline character
-        }
-
-        qint64 bytesWritten = m_socket->write(buffer.constData(), toWrite);
-        if (bytesWritten <= 0) {
-            // If write fails, exit early
-            return false;
-        }
-        m_socket->waitForBytesWritten(); // Ensure data is written before continuing
-        missing -= bytesWritten;
+    timer->start();
+    qint64 initialChunkSize = qMin(chunk_size, size);
+    QByteArray initialChunk = data.left(initialChunkSize);
+    qint64 bytesWritten = m_socket->write(initialChunk);
+    if (bytesWritten <= 0) {
+        // If write fails, exit early
+        return;
     }
-
-    QString reply;
-    if (!SpeedTestClient::readLine(m_socket, reply)) {
-        return false;
-    }
-
-    millisec = timer.elapsed(); // Calculate the elapsed time in milliseconds
-
-    // Check if the server's response starts with the expected acknowledgement
-    QString expectedReplyStart = QString("OK %1 ").arg(size);
-    return reply.startsWith(expectedReplyStart);
 }
 
 QString SpeedTestClient::version() {
@@ -184,7 +204,7 @@ const std::pair<QString, int> SpeedTestClient::hostport() {
 // It closes a connection
 void SpeedTestClient::close() {
     if (m_socket && m_socket->state() == QTcpSocket::ConnectedState){
-        SpeedTestClient::writeLine(m_socket, "QUIT");
+        SpeedTestClient::writeLine("QUIT");
         m_socket->close();
         m_socket->deleteLater();
     }
@@ -234,8 +254,8 @@ bool SpeedTestClient::readLine(QTcpSocket *socket, QString &buffer) {
     return true;
 }
 
-bool SpeedTestClient::writeLine(QTcpSocket *socket, const QString &buffer) {
-    if (!socket) // Check if the socket is valid
+bool SpeedTestClient::writeLine(const QString &buffer) {
+    if (!m_socket || m_socket->state() != QTcpSocket::ConnectedState)
         return false;
 
     // Check if the buffer is empty
@@ -251,7 +271,7 @@ bool SpeedTestClient::writeLine(QTcpSocket *socket, const QString &buffer) {
     // Convert QString to QByteArray for writing
     QByteArray data = buffCopy.toUtf8();
     qint64 len = data.size();
-    qint64 n = socket->write(data);
+    qint64 n = m_socket->write(data);
 
     // Check if the number of bytes written matches the expected length
     return n == len;
